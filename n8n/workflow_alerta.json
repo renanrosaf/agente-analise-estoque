@@ -1,0 +1,190 @@
+{
+  "name": "Alerta de Estoque Crítico",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alerta-estoque",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "f4f3018b-f84a-4cd9-9579-df7e6db458d6",
+      "name": "Webhook",
+      "webhookId": "fdd9303f-f9a5-4c63-bcf8-0ed89da9be94"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "c067dd97-dc2b-4070-8ecb-cad9a6091749",
+              "leftValue": "={{ $json.body.situacao }}",
+              "rightValue": "esgotado",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            },
+            {
+              "id": "48852f75-f400-4c87-84d1-e0070d5465c7",
+              "leftValue": "={{ $json.body.situacao }}",
+              "rightValue": "estoque_baixo",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        224,
+        0
+      ],
+      "id": "f67cdb96-9f7f-41fd-87ce-4e5c8a4ce3e4",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f8a5b3f7-5eeb-4b62-82e6-babdfe0c894a",
+              "name": "status_alerta",
+              "value": "ALERTA_ENVIADO",
+              "type": "string"
+            },
+            {
+              "id": "1fd8b34b-aff2-470d-8c8c-40be5ec06bcc",
+              "name": "=prioridade",
+              "value": "={{ $json.body.situacao === 'esgotado' ? 'URGENTE' : 'ALTA' }}",
+              "type": "string"
+            },
+            {
+              "id": "5be2e689-6895-4f0c-9b8a-c11cb5cfbb67",
+              "name": "=mensagem_alerta",
+              "value": "=Reposição necessária para {{ $json.body.codigo }} ({{ $json.body.nome }}): {{ $json.body.quantidade_atual }} {{ $json.body.unidade }} disponíveis (mínimo: {{ $json.body.estoque_minimo }}).",
+              "type": "string"
+            },
+            {
+              "id": "9eed66a4-b011-4a75-826a-c090a69f92bd",
+              "name": "=registrado_em",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        -96
+      ],
+      "id": "4c00fbfc-3f41-494b-9c43-5e6e893e5340",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "e975b41e-db9a-4cb6-b00d-5ce674a7d2e1",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status_alerta\": \"SEM_ALERTA\", \"mensagem\": \"Estoque dentro do nível normal.\"}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        448,
+        96
+      ],
+      "id": "f1535cba-2a2f-41a7-8c5c-9e57d7c00651",
+      "name": "Respond to Webhook1"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "20c13f52-da0f-4e6c-8c4c-9a983b80f045",
+  "meta": {
+    "instanceId": "1625003d5d2033b65651e4e9bc7574a9b04ca4750c93c7e8e4a57d3ac1275826"
+  },
+  "nodeGroups": [],
+  "id": "hb1cqH7USIBNhcYn",
+  "tags": []
+}
