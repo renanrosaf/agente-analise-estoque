@@ -62,7 +62,7 @@ flowchart LR
 
 ## 5. Automação complementar com n8n
 
-O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow\_alerta.json](https://www.google.com/search?q=n8n/workflow_alerta.json)) atua **após** a análise do LangGraph, sem substituir a lógica principal do agente:
+O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow_alerta.json](n8n/workflow_alerta.json) atua **após** a análise do LangGraph, sem substituir a lógica principal do agente:
 
 1. **Webhook (`POST /webhook/alerta-estoque`):** recebe do cliente Python (`src/n8n_client.py`) os dados do produto analisado e sua situação.
 2. **IF:** valida se `situacao` é `esgotado` **OU** `estoque_baixo`.
@@ -71,7 +71,7 @@ O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow\_alerta.
 
 ### Evidência de execução do workflow no n8n
 
-
+[n8n/evidencia_execucao_n8n.png]
 
 ## 6. Organização dos arquivos
 
@@ -166,7 +166,7 @@ python -m tests.run_tests
 | 4 | Indisponibilidade simulada `PRD-503` — HTTP 503 *(Bônus)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
 | 5 | Código em formato inválido `ABC-1` *(Bônus)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
 
-Os logs completos (entrada, resultado esperado, resposta observada e JSON de ferramentas/n8n) estão registrados em [tests/evidencias.md](https://www.google.com/search?q=tests/evidencias.md).
+Os logs completos (entrada, resultado esperado, resposta observada e JSON de ferramentas/n8n) estão registrados em [tests/evidencias.md](tests/evidencias.md)).
 
 ## 9. Confiabilidade, segurança e limitações
 
