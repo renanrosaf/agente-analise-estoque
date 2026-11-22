@@ -10,6 +10,32 @@ PADRAO_CODIGO = re.compile(r"^PRD-[0-9]{3}$")
 TIMEOUT_SEGUNDOS = 5.0
 
 
+def classificar_produto(produto: dict[str, Any]) -> dict[str, Any]:
+    """Fonte única de verdade para classificação de estoque (inclui limite mínimo em estoque_baixo)."""
+    qtd = int(produto["quantidade_atual"])
+    minimo = int(produto["estoque_minimo"])
+
+    if qtd == 0:
+        situacao = "esgotado"
+        requer_reposicao = True
+        no_limite_exato = False
+    elif qtd <= minimo:
+        situacao = "estoque_baixo"
+        requer_reposicao = True
+        no_limite_exato = qtd == minimo
+    else:
+        situacao = "normal"
+        requer_reposicao = False
+        no_limite_exato = False
+
+    return {
+        **produto,
+        "situacao": situacao,
+        "no_limite_exato": no_limite_exato,
+        "requer_reposicao": requer_reposicao,
+    }
+
+
 def _ler_json_seguro(resposta: httpx.Response) -> dict[str, Any]:
     try:
         return resposta.json()
@@ -52,7 +78,7 @@ def consultar_produto(codigo: str) -> dict[str, Any]:
     dados = _ler_json_seguro(resposta)
 
     if resposta.status_code == 200:
-        return {"sucesso": True, "produto": dados}
+        return {"sucesso": True, "produto": classificar_produto(dados)}
 
     if resposta.status_code == 404:
         return {
@@ -104,10 +130,11 @@ def listar_produtos(categoria: str | None = None) -> dict[str, Any]:
         }
 
     dados = _ler_json_seguro(resposta)
+    produtos_classificados = [classificar_produto(p) for p in dados.get("produtos", [])]
     return {
         "sucesso": True,
-        "total": dados.get("total", 0),
-        "produtos": dados.get("produtos", []),
+        "total": dados.get("total", len(produtos_classificados)),
+        "produtos": produtos_classificados,
     }
 
 

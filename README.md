@@ -28,22 +28,22 @@ Este projeto implementa um **agente de IA em Python com LangGraph** capaz de int
 
 ```mermaid
 flowchart LR
-    U["Usuário / CLI"] --> A["Nó agente_llm (LangGraph + Groq)"]
+    U["Usuário / CLI"] --> A["Nó agente (LangGraph + Groq)"]
     A --> D{"Decisão condicional (tool_calls e iteracoes < 5?)"}
     D -- Sim --> T["Nó ferramentas (src/tools.py)"]
     T -- HTTP GET --> API[("API de Estoque (FastAPI :8000)")]
     API --> T
     T --> A
-    D -- Não / Limite --> R["END · Resposta verificada"]
-    R -- Estoque baixo ou esgotado --> N8N["Webhook n8n (:5678)"]
+    D -- Não / Limite --> N["Nó notificar_n8n (Webhook :5678)"]
+    N --> R["END · Resposta verificada"]
 ```
 
 ### Estrutura do LangGraph (`src/graph.py`)
 
-- **Estado compartilhado (`AgentState`):** armazena o histórico de mensagens (`messages` com `add_messages`) e o contador explícito `iteracoes`.
-- **Nós funcionais:** `agente` (invoca o LLM com `SystemMessage` contendo papel, regras de classificação e restrições) e `ferramentas` (`ToolNode` com as ferramentas registradas).
-- **Transição condicional (`decidir_proximo_passo`):** decide dinamicamente entre acionar `ferramentas` ou encerrar em `END` (por exemplo, em perguntas conceituais).
-- **Condição de parada:** trava dupla com `MAX_ITERACOES = 5` na função de roteamento e `recursion_limit = 12` na invocação do grafo.
+- **Estado compartilhado (`AgentState`):** armazena o histórico de mensagens (`messages` com `add_messages`), o contador explícito `iteracoes` e os retornos `alertas_n8n`.
+- **Nós funcionais (3 nós):** `agente` (invoca o LLM com `SystemMessage` estruturado em **Papel, Objetivo, Contexto e Restrições**), `ferramentas` (`ToolNode` com as 3 ferramentas HTTP) e `notificar_n8n` (envia os produtos consultados ao Webhook do n8n dentro do próprio grafo).
+- **Transição condicional (`decidir_proximo_passo`):** decide entre acionar `ferramentas` ou seguir para `notificar_n8n → END` (sem chamar API em perguntas conceituais ou fora do escopo).
+- **Condição de parada e fallback:** trava dupla com `MAX_ITERACOES = 5` e `recursion_limit = 14`, além de mensagem explícita de fallback caso o limite seja atingido sem resposta textual.
 
 ### Ferramentas Python integradas à API (`src/tools.py`)
 
@@ -51,14 +51,16 @@ flowchart LR
 - `listar_produtos(categoria=None)`: consulta `GET /produtos` com filtro opcional por categoria.
 - `listar_categorias()`: consulta `GET /categorias` para obter as categorias válidas cadastradas.
 
+
 ### Regras de classificação adotadas pelo agente
 
-| Condição | Classificação |
-|---|---|
-| `quantidade_atual == 0` | **Esgotado** |
-| `0 < quantidade_atual < estoque_minimo` | **Estoque baixo** |
-| `quantidade_atual == estoque_minimo` (e `> 0`) | **No limite mínimo** |
-| `quantidade_atual > estoque_minimo` | **Normal** |
+A classificação é calculada em Python como **fonte única de verdade** em `src/tools.py` (evitando divergência entre o texto do LLM e o payload do n8n). Seguindo o critério do README da API do professor, itens exatamente no limite mínimo (`PRD-005` e `PRD-009`) são tratados como **estoque baixo** com sinalização `no_limite_exato: true`, garantindo alerta preventivo de reposição.
+
+| Condição | Classificação (`situacao`) | Comportamento no n8n |
+|---|---|---|
+| `quantidade_atual == 0` | **Esgotado** (`esgotado`) | `ALERTA_ENVIADO` (`URGENTE`) |
+| `0 < quantidade_atual <= estoque_minimo` | **Estoque baixo** (`estoque_baixo`, inclui limite exato com `no_limite_exato: true`) | `ALERTA_ENVIADO` (`ALTA`) |
+| `quantidade_atual > estoque_minimo` | **Normal** (`normal`) | `SEM_ALERTA` (ramo `false` do `IF`) |
 
 ## 5. Automação complementar com n8n
 
@@ -158,13 +160,15 @@ Para reproduzir os **3 cenários obrigatórios** e os **2 cenários bônus de co
 python -m tests.run_tests
 ```
 
-| # | Cenário | Iterações | Ferramentas | n8n | Resultado |
+| # | Cenário | Iterações | Ferramentas | Retorno n8n | Resultado |
 |---|---|---:|---|---|---|
-| 1 | Análise de estoque existente (`PRD-001`) *(Obrigatório)* | 2 | `consultar_produto` | Alerta enviado | **PASSOU** |
+| 1 | Análise de estoque baixo (`PRD-001`) *(Obrigatório)* | 2 | `consultar_produto` | `ALERTA_ENVIADO` | **PASSOU** |
 | 2 | Produto inexistente `PRD-999` — HTTP 404 *(Obrigatório)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
 | 3 | Pergunta conceitual sem chamar API *(Obrigatório)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
-| 4 | Indisponibilidade simulada `PRD-503` — HTTP 503 *(Bônus)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
-| 5 | Código em formato inválido `ABC-1` *(Bônus)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
+| 4 | Caso de borda no limite mínimo (`PRD-005` — 30/30) *(Bônus)* | 2 | `consultar_produto` | `ALERTA_ENVIADO` | **PASSOU** |
+| 5 | Produto em estoque normal (`PRD-002` — ramo `false` do `IF`) *(Bônus)* | 2 | `consultar_produto` | `SEM_ALERTA` | **PASSOU** |
+| 6 | Fora do escopo e tentativa de cadastro não autorizado *(Bônus)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
+| 7 | Indisponibilidade simulada `PRD-503` — HTTP 503 *(Bônus)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
 
 Os logs completos (entrada, resultado esperado, resposta observada e JSON de ferramentas/n8n) estão registrados em [tests/evidencias.md](tests/evidencias.md)).
 

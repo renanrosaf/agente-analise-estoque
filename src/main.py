@@ -1,5 +1,4 @@
 from src.graph import executar_agente
-from src.n8n_client import notificar_produtos_criticos
 
 
 def main() -> None:
@@ -24,12 +23,11 @@ def main() -> None:
         print(f"\n[Log] Iterações: {resultado['iteracoes']} | Ferramentas usadas: {tools or 'nenhuma'}")
         print(f"Agente:\n{resultado['resposta']}\n")
 
-        alertas = notificar_produtos_criticos(resultado["resultados_tools"])
-        for alerta in alertas:
-            if alerta.get("enviado"):
-                print(f"[n8n] Alerta registrado -> {alerta['retorno_n8n']}\n")
+        for item in resultado["alertas_n8n"]:
+            if item.get("enviado"):
+                print(f"[n8n | {item['codigo']}] -> {item['retorno_n8n']}\n")
             else:
-                print(f"[n8n] Aviso -> {alerta['mensagem']}\n")
+                print(f"[n8n | {item['codigo']}] Aviso -> {item['mensagem']}\n")
 
 
 if __name__ == "__main__":
