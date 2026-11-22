@@ -11,9 +11,28 @@ TIMEOUT_SEGUNDOS = 5.0
 
 
 def classificar_produto(produto: dict[str, Any]) -> dict[str, Any]:
-    """Fonte única de verdade para classificação de estoque (inclui limite mínimo em estoque_baixo)."""
-    qtd = int(produto["quantidade_atual"])
-    minimo = int(produto["estoque_minimo"])
+    """Fonte única de verdade para classificação de estoque (protegida contra campos ausentes)."""
+    qtd_raw = produto.get("quantidade_atual")
+    minimo_raw = produto.get("estoque_minimo")
+
+    if qtd_raw is None or minimo_raw is None:
+        return {
+            **produto,
+            "situacao": "indefinida",
+            "no_limite_exato": False,
+            "requer_reposicao": False,
+        }
+
+    try:
+        qtd = int(qtd_raw)
+        minimo = int(minimo_raw)
+    except (TypeError, ValueError):
+        return {
+            **produto,
+            "situacao": "indefinida",
+            "no_limite_exato": False,
+            "requer_reposicao": False,
+        }
 
     if qtd == 0:
         situacao = "esgotado"
@@ -66,13 +85,19 @@ def consultar_produto(codigo: str) -> dict[str, Any]:
         return {
             "sucesso": False,
             "erro": "timeout_api",
-            "mensagem": "A API de estoque demorou demais para responder. Tente novamente.",
+            "mensagem": f"A API de estoque em {API_ESTOQUE_URL} demorou demais para responder. Tente novamente.",
         }
     except httpx.ConnectError:
         return {
             "sucesso": False,
             "erro": "api_indisponivel",
-            "mensagem": "Não foi possível conectar à API de estoque. Verifique se ela está rodando em 127.0.0.1:8000.",
+            "mensagem": f"Não foi possível conectar à API de estoque em {API_ESTOQUE_URL}. Verifique se o serviço está ativo.",
+        }
+    except httpx.HTTPError as exc:
+        return {
+            "sucesso": False,
+            "erro": "erro_http",
+            "mensagem": f"Falha de comunicação HTTP com a API de estoque ({API_ESTOQUE_URL}): {exc}",
         }
 
     dados = _ler_json_seguro(resposta)
@@ -115,11 +140,11 @@ def listar_produtos(categoria: str | None = None) -> dict[str, Any]:
             params=params,
             timeout=TIMEOUT_SEGUNDOS,
         )
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except httpx.HTTPError as exc:
         return {
             "sucesso": False,
-            "erro": "api_indisponivel",
-            "mensagem": "Não foi possível consultar a lista de produtos na API de estoque.",
+            "erro": "erro_http",
+            "mensagem": f"Não foi possível consultar a lista de produtos em {API_ESTOQUE_URL}: {exc}",
         }
 
     if resposta.status_code != 200:
@@ -143,11 +168,11 @@ def listar_categorias() -> dict[str, Any]:
     """Lista todas as categorias disponíveis na API de Estoque (útil antes de filtrar por categoria)."""
     try:
         resposta = httpx.get(f"{API_ESTOQUE_URL}/categorias", timeout=TIMEOUT_SEGUNDOS)
-    except (httpx.ConnectError, httpx.TimeoutException):
+    except httpx.HTTPError as exc:
         return {
             "sucesso": False,
-            "erro": "api_indisponivel",
-            "mensagem": "Não foi possível consultar as categorias na API de estoque.",
+            "erro": "erro_http",
+            "mensagem": f"Não foi possível consultar as categorias em {API_ESTOQUE_URL}: {exc}",
         }
 
     if resposta.status_code != 200:
