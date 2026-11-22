@@ -74,6 +74,7 @@ O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow_alerta.j
 ### Evidência de execução do workflow no n8n
 
 [n8n/evidencia_execucao_n8n.png]
+[n8n/evidencia_payload_n8n.png]
 
 ## 6. Organização dos arquivos
 
@@ -82,6 +83,7 @@ agente-analise-estoque/
 ├── n8n/
 │   ├── workflow_alerta.json        # Workflow exportado do n8n
 │   └── evidencia_execucao_n8n.png  # Print da execução com sucesso no n8n
+│   └── evidencia_payload_n8n.png  # Print da execução com sucesso no n8n
 ├── src/
 │   ├── __init__.py
 │   ├── config.py                   # Carregamento e validação de variáveis (.env)

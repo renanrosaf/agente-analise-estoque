@@ -74,19 +74,19 @@
             },
             {
               "id": "1fd8b34b-aff2-470d-8c8c-40be5ec06bcc",
-              "name": "=prioridade",
+              "name": "prioridade",
               "value": "={{ $json.body.situacao === 'esgotado' ? 'URGENTE' : 'ALTA' }}",
               "type": "string"
             },
             {
               "id": "5be2e689-6895-4f0c-9b8a-c11cb5cfbb67",
-              "name": "=mensagem_alerta",
+              "name": "mensagem_alerta",
               "value": "=Reposição necessária para {{ $json.body.codigo }} ({{ $json.body.nome }}): {{ $json.body.quantidade_atual }} {{ $json.body.unidade }} disponíveis (mínimo: {{ $json.body.estoque_minimo }}).",
               "type": "string"
             },
             {
               "id": "9eed66a4-b011-4a75-826a-c090a69f92bd",
-              "name": "=registrado_em",
+              "name": "registrado_em",
               "value": "={{ $now.toISO() }}",
               "type": "string"
             }
@@ -180,7 +180,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "20c13f52-da0f-4e6c-8c4c-9a983b80f045",
+  "versionId": "b7f79e87-1bd5-43a8-b301-2eb572a0866c",
   "meta": {
     "instanceId": "1625003d5d2033b65651e4e9bc7574a9b04ca4750c93c7e8e4a57d3ac1275826"
   },

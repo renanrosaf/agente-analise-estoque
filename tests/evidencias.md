@@ -1,6 +1,6 @@
 # Evidências de Testes — Agente de Análise de Estoque
 
-**Data/hora da execução:** 22/11/2026 13:37:00
+**Data/hora da execução:** 22/11/2026 14:10:49
 
 ## Como reproduzir
 
@@ -73,7 +73,7 @@ Como `no_limite_exato` está `false`, o produto ainda não atingiu exatamente o 
         "status_alerta": "ALERTA_ENVIADO",
         "prioridade": "ALTA",
         "mensagem_alerta": "Reposição necessária para PRD-001 (Mouse sem fio): 5 un disponíveis (mínimo: 10).",
-        "registrado_em": "2026-11-22T13:37:02.965-03:00"
+        "registrado_em": "2026-11-22T14:10:51.037-03:00"
       }
     }
   ]
@@ -130,28 +130,23 @@ Como o item não consta no sistema, não há informações de quantidade, estoqu
 
 ### Resposta observada do agente
 
-**Estoque mínimo** (ou *estoque de segurança*) é a quantidade mínima de um item que a empresa decide manter em seu armazém para garantir que a demanda dos clientes seja atendida mesmo diante de imprevistos, como atrasos na reposição, variações inesperadas na demanda ou falhas na produção.
+**Estoque mínimo** (ou *estoque de segurança*) é a quantidade mínima de um item que a empresa decide manter em seu armazém para garantir que a demanda dos clientes seja atendida mesmo diante de variações inesperadas, como atrasos de fornecedores, picos de demanda ou falhas na produção.
 
 ### Por que ele é importante?
-1. **Evita rupturas (stock‑out)** – Quando o nível de estoque cai abaixo do mínimo, há risco de não conseguir atender pedidos, o que pode gerar perda de vendas e insatisfação do cliente.  
+1. **Evita rupturas (stock‑outs)** – Quando o nível de estoque cai abaixo do mínimo, há risco de não conseguir atender pedidos, o que pode gerar perda de vendas e insatisfação do cliente.  
 2. **Reduz custos de emergência** – Manter um nível de segurança diminui a necessidade de compras urgentes, que costumam ser mais caras (frete expresso, preços de última hora).  
 3. **Facilita o planejamento** – O estoque mínimo serve como parâmetro para disparar alertas de reposição e para definir a quantidade a ser encomendada (por exemplo, usando o método do ponto de pedido).  
 
 ### Como é definido?
 - **Análise de demanda**: histórico de vendas, sazonalidade e previsões de consumo.  
-- **Tempo de reposição (lead time)**: tempo médio entre a ordem de compra e a chegada do produto ao estoque.  
-- **Variabilidade**: flutuações tanto da demanda quanto do lead time.  
-- **Custo de falta vs. custo de manutenção**: balanceamento entre o custo de perder uma venda e o custo de manter estoque ocioso.
+- **Tempo de reposição (lead time)**: tempo médio entre a ordem de compra e a chegada do produto.  
+- **Variabilidade**: flutuações tanto na demanda quanto no lead time.  
+- **Custo de falta vs. custo de manutenção**: balanceia o custo de manter estoque extra contra o custo de perder vendas ou incorrer em compras de emergência.
 
-A fórmula mais simples costuma ser:
+### Exemplo prático
+Se um item tem consumo médio de 100 unidades por semana e o fornecedor leva 2 semanas para entregar, o consumo durante o lead time é 200 unidades. Se a empresa quiser cobrir uma variação de ±20 % na demanda, pode definir um estoque mínimo de 240 unidades (200 + 20 %). Quando o estoque cair para esse nível, um alerta de reposição é disparado.
 
-\[
-\text{Estoque Mínimo} = \text{Consumo Médio Diário} \times \text{Lead Time} + \text{Margem de Segurança}
-\]
-
-A **margem de segurança** (ou buffer) incorpora a variabilidade e garante que, mesmo em situações adversas, o nível de estoque não caia abaixo do ponto crítico.
-
-Em resumo, o estoque mínimo é um parâmetro de controle que protege a operação contra interrupções, permitindo que a empresa mantenha um nível de serviço adequado ao cliente enquanto controla os custos de manutenção de inventário.
+Em resumo, o estoque mínimo funciona como um “colchão” que protege a operação contra imprevistos, garantindo continuidade no atendimento ao cliente e eficiência nos processos de compra.
 
 ### Evidência técnica (logs de ferramentas e n8n)
 
@@ -182,7 +177,7 @@ Em resumo, o estoque mínimo é um parâmetro de controle que protege a operaç�
 
 **Observação importante:** o campo `no_limite_exato` está marcado como **true**, o que indica que a quantidade atual atingiu exatamente o limite mínimo estabelecido. Isso requer atenção imediata e reposição preventiva para evitar que o item fique esgotado.  
 
-**Recomendação:** providenciar a reposição do produto o quanto antes, pois ele já está no limite crítico de estoque.
+**Recomendação:** providenciar a reposição do produto o quanto antes, considerando que já está no ponto crítico de estoque.
 
 ### Evidência técnica (logs de ferramentas e n8n)
 
@@ -212,7 +207,7 @@ Em resumo, o estoque mínimo é um parâmetro de controle que protege a operaç�
         "status_alerta": "ALERTA_ENVIADO",
         "prioridade": "ALTA",
         "mensagem_alerta": "Reposição necessária para PRD-005 (Papel sulfite A4): 30 pct disponíveis (mínimo: 30).",
-        "registrado_em": "2026-11-22T13:37:06.960-03:00"
+        "registrado_em": "2026-11-22T14:10:55.133-03:00"
       }
     }
   ]
@@ -230,17 +225,10 @@ Em resumo, o estoque mínimo é um parâmetro de controle que protege a operaç�
 ### Resposta observada do agente
 
 **Produto:** PRD-002 – *Teclado USB*  
-**Categoria:** Periféricos  
+**Quantidade atual:** 40 un  
+**Estoque mínimo:** 15 un  
 **Unidade:** un  
-
-| Campo                | Valor |
-|----------------------|-------|
-| Quantidade atual     | 40 |
-| Estoque mínimo       | 15 |
-| Situação (classificação oficial) | **normal** |
-| Requer reposição?    | **Não** (requer_reposicao = false) |
-
-A situação “normal” indica que a quantidade atual está acima do estoque mínimo, portanto não há necessidade de reposição neste momento.
+**Situação (classificação oficial):** **normal** – a quantidade está acima do estoque mínimo, portanto não há necessidade de reposição neste momento.
 
 ### Evidência técnica (logs de ferramentas e n8n)
 
@@ -285,7 +273,7 @@ A situação “normal” indica que a quantidade atual está acima do estoque m
 
 ### Resposta observada do agente
 
-Desculpe, mas eu só realizo consultas e análises de estoque. Não posso cadastrar novos produtos nem fornecer previsões do tempo. Se precisar de informações sobre a situação ou disponibilidade de algum item já existente no estoque, estou à disposição para ajudar.
+Desculpe, mas eu só realizo consultas e análises de estoque. Não tenho permissão para cadastrar novos produtos nem para fornecer previsões do tempo. Se precisar de informações sobre a situação ou disponibilidade de algum item já existente no estoque, estou à disposição para ajudar.
 
 ### Evidência técnica (logs de ferramentas e n8n)
 
@@ -307,12 +295,7 @@ Desculpe, mas eu só realizo consultas e análises de estoque. Não posso cadast
 
 ### Resposta observada do agente
 
-A consulta ao produto **PRD-503** não pôde ser concluída porque o serviço da API de Estoque está temporariamente indisponível:
-
-- **Erro retornado:** `servico_indisponivel`
-- **Mensagem:** “Serviço temporariamente indisponível. Tente novamente mais tarde.”
-
-Por favor, tente a solicitação novamente em alguns minutos. Caso o problema persista, avise-me que tentaremos outra abordagem ou verificaremos se há alguma alternativa disponível.
+Desculpe, não foi possível consultar o produto **PRD-503** porque o serviço da API de Estoque está temporariamente indisponível (erro *servico_indisponivel*). Por favor, tente novamente mais tarde. Caso o problema persista, entre em contato com o suporte do sistema de estoque.
 
 ### Evidência técnica (logs de ferramentas e n8n)
 
