@@ -3,6 +3,7 @@ from typing import Any
 
 import httpx
 from langchain_core.tools import tool
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from src.config import API_ESTOQUE_URL
 
@@ -10,45 +11,45 @@ PADRAO_CODIGO = re.compile(r"^PRD-[0-9]{3}$")
 TIMEOUT_SEGUNDOS = 5.0
 
 
-def classificar_produto(produto: dict[str, Any]) -> dict[str, Any]:
-    """Fonte única de verdade para classificação de estoque (protegida contra campos ausentes)."""
-    qtd_raw = produto.get("quantidade_atual")
-    minimo_raw = produto.get("estoque_minimo")
+class ProdutoAPI(BaseModel):
+    """Contrato estrito de um produto retornado pela API de Estoque."""
 
-    if qtd_raw is None or minimo_raw is None:
-        return {
-            **produto,
-            "situacao": "indefinida",
-            "no_limite_exato": False,
-            "requer_reposicao": False,
-        }
+    model_config = ConfigDict(strict=True)
 
-    try:
-        qtd = int(qtd_raw)
-        minimo = int(minimo_raw)
-    except (TypeError, ValueError):
-        return {
-            **produto,
-            "situacao": "indefinida",
-            "no_limite_exato": False,
-            "requer_reposicao": False,
-        }
+    codigo: str = Field(pattern=r"^PRD-[0-9]{3}$")
+    nome: str = Field(min_length=1)
+    categoria: str = Field(min_length=1)
+    quantidade_atual: int = Field(ge=0)
+    estoque_minimo: int = Field(ge=0)
+    unidade: str = Field(min_length=1)
 
-    if qtd == 0:
+
+def classificar_produto(dados_brutos: dict[str, Any]) -> dict[str, Any]:
+    """Valida os dados com Pydantic (strict=True) e calcula a classificação oficial de estoque.
+
+    Args:
+        dados_brutos: Dicionário JSON retornado pela API de Estoque.
+
+    Returns:
+        Dicionário do produto validado acrescido de `situacao`, `no_limite_exato` e `requer_reposicao`.
+    """
+    produto = ProdutoAPI.model_validate(dados_brutos)
+
+    if produto.quantidade_atual == 0:
         situacao = "esgotado"
         requer_reposicao = True
         no_limite_exato = False
-    elif qtd <= minimo:
+    elif produto.quantidade_atual <= produto.estoque_minimo:
         situacao = "estoque_baixo"
         requer_reposicao = True
-        no_limite_exato = qtd == minimo
+        no_limite_exato = produto.quantidade_atual == produto.estoque_minimo
     else:
         situacao = "normal"
         requer_reposicao = False
         no_limite_exato = False
 
     return {
-        **produto,
+        **produto.model_dump(),
         "situacao": situacao,
         "no_limite_exato": no_limite_exato,
         "requer_reposicao": requer_reposicao,
@@ -64,7 +65,15 @@ def _ler_json_seguro(resposta: httpx.Response) -> dict[str, Any]:
 
 @tool
 def consultar_produto(codigo: str) -> dict[str, Any]:
-    """Consulta um produto específico na API de Estoque pelo código no formato PRD-XXX (ex.: PRD-001)."""
+    """Consulta um produto específico na API de Estoque pelo código.
+
+    Args:
+        codigo: Código do produto no formato PRD-XXX (três dígitos, ex.: 'PRD-001').
+
+    Returns:
+        Dicionário com `sucesso=True` e os dados validados/classificados em `produto`,
+        ou `sucesso=False` com `erro` e `mensagem` em caso de falha ou código inválido.
+    """
     codigo_limpo = codigo.strip().upper()
     if not PADRAO_CODIGO.match(codigo_limpo):
         return {
@@ -103,7 +112,15 @@ def consultar_produto(codigo: str) -> dict[str, Any]:
     dados = _ler_json_seguro(resposta)
 
     if resposta.status_code == 200:
-        return {"sucesso": True, "produto": classificar_produto(dados)}
+        try:
+            produto_validado = classificar_produto(dados)
+        except ValidationError as exc:
+            return {
+                "sucesso": False,
+                "erro": "dados_api_invalidos",
+                "mensagem": f"Resposta da API fora do contrato esperado: {exc.error_count()} erro(s) de validação.",
+            }
+        return {"sucesso": True, "produto": produto_validado}
 
     if resposta.status_code == 404:
         return {
@@ -131,7 +148,15 @@ def consultar_produto(codigo: str) -> dict[str, Any]:
 
 @tool
 def listar_produtos(categoria: str | None = None) -> dict[str, Any]:
-    """Lista todos os produtos do estoque. Opcionalmente filtra por categoria (ex.: 'Periféricos', 'Papelaria')."""
+    """Lista os produtos do estoque com resumo consolidado por situação.
+
+    Args:
+        categoria: Nome opcional da categoria para filtrar (ex.: 'Periféricos', 'Papelaria').
+
+    Returns:
+        Dicionário com `sucesso=True`, `total`, `resumo` (contagens por situação) e `produtos`
+        validados/classificados, ou `sucesso=False` com `erro` e `mensagem`.
+    """
     params = {"categoria": categoria.strip()} if categoria and categoria.strip() else None
 
     try:
@@ -155,17 +180,38 @@ def listar_produtos(categoria: str | None = None) -> dict[str, Any]:
         }
 
     dados = _ler_json_seguro(resposta)
-    produtos_classificados = [classificar_produto(p) for p in dados.get("produtos", [])]
+    try:
+        produtos_classificados = [classificar_produto(p) for p in dados.get("produtos", [])]
+    except ValidationError as exc:
+        return {
+            "sucesso": False,
+            "erro": "dados_api_invalidos",
+            "mensagem": f"Lista de produtos da API fora do contrato esperado: {exc.error_count()} erro(s).",
+        }
+
+    resumo = {
+        "esgotado": sum(1 for p in produtos_classificados if p["situacao"] == "esgotado"),
+        "estoque_baixo": sum(1 for p in produtos_classificados if p["situacao"] == "estoque_baixo"),
+        "no_limite_exato": sum(1 for p in produtos_classificados if p["no_limite_exato"]),
+        "normal": sum(1 for p in produtos_classificados if p["situacao"] == "normal"),
+        "requerem_reposicao": sum(1 for p in produtos_classificados if p["requer_reposicao"]),
+    }
+
     return {
         "sucesso": True,
         "total": dados.get("total", len(produtos_classificados)),
+        "resumo": resumo,
         "produtos": produtos_classificados,
     }
 
 
 @tool
 def listar_categorias() -> dict[str, Any]:
-    """Lista todas as categorias disponíveis na API de Estoque (útil antes de filtrar por categoria)."""
+    """Lista todas as categorias disponíveis na API de Estoque.
+
+    Returns:
+        Dicionário com `sucesso=True`, `total` e `categorias`, ou `sucesso=False` com `erro` e `mensagem`.
+    """
     try:
         resposta = httpx.get(f"{API_ESTOQUE_URL}/categorias", timeout=TIMEOUT_SEGUNDOS)
     except httpx.HTTPError as exc:

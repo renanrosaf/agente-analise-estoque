@@ -5,109 +5,233 @@ from typing import Any
 
 from src.graph import executar_agente
 
+CAMPOS_TECNICOS_PROIBIDOS = ("no_limite_exato", "requer_reposicao", "estoque_baixo", "quantidade_atual")
+
+
+def obter_produto_consultado(resultado: dict[str, Any]) -> dict[str, Any] | None:
+    """Extrai o primeiro produto validado retornado com sucesso pelas tools."""
+    for item in resultado["resultados_tools"]:
+        try:
+            dados = json.loads(item["conteudo"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(dados, dict) and dados.get("sucesso") and isinstance(dados.get("produto"), dict):
+            return dados["produto"]
+    return None
+
+
+def obter_erro_tool(resultado: dict[str, Any]) -> str | None:
+    """Extrai o identificador estável `erro` retornado pelas tools, quando houver."""
+    for item in resultado["resultados_tools"]:
+        try:
+            dados = json.loads(item["conteudo"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(dados, dict) and not dados.get("sucesso"):
+            return dados.get("erro")
+    return None
+
+
+def obter_retorno_n8n(resultado: dict[str, Any], codigo: str) -> dict[str, Any] | None:
+    """Retorna o JSON de resposta do n8n para um produto específico."""
+    for item in resultado["alertas_n8n"]:
+        if item.get("codigo") == codigo and item.get("enviado"):
+            return item.get("retorno_n8n")
+    return None
+
+
+def _sem_campos_tecnicos(texto: str) -> bool:
+    return not any(campo in texto for campo in CAMPOS_TECNICOS_PROIBIDOS)
+
+
+def _validar_cenario_1(res: dict[str, Any]) -> bool:
+    produto = obter_produto_consultado(res)
+    n8n = obter_retorno_n8n(res, "PRD-001")
+    return (
+        produto is not None
+        and produto["codigo"] == "PRD-001"
+        and produto["situacao"] == "estoque_baixo"
+        and produto["requer_reposicao"] is True
+        and produto["no_limite_exato"] is False
+        and _sem_campos_tecnicos(res["resposta"])
+        and n8n is not None
+        and n8n.get("status_alerta") == "ALERTA_ENVIADO"
+        and n8n.get("prioridade") == "ALTA"
+    )
+
+
+def _validar_cenario_2(res: dict[str, Any]) -> bool:
+    return (
+        any(t["nome"] == "consultar_produto" for t in res["ferramentas_chamadas"])
+        and obter_produto_consultado(res) is None
+        and obter_erro_tool(res) == "produto_nao_encontrado"
+        and len(res["alertas_n8n"]) == 0
+    )
+
+
+def _validar_cenario_3(res: dict[str, Any]) -> bool:
+    return (
+        len(res["ferramentas_chamadas"]) == 0
+        and res["iteracoes"] == 1
+        and len(res["alertas_n8n"]) == 0
+        and len(res["resposta"]) > 40
+    )
+
+
+def _validar_cenario_4(res: dict[str, Any]) -> bool:
+    produto = obter_produto_consultado(res)
+    n8n = obter_retorno_n8n(res, "PRD-005")
+    return (
+        produto is not None
+        and produto["codigo"] == "PRD-005"
+        and produto["situacao"] == "estoque_baixo"
+        and produto["no_limite_exato"] is True
+        and produto["requer_reposicao"] is True
+        and _sem_campos_tecnicos(res["resposta"])
+        and n8n is not None
+        and n8n.get("status_alerta") == "ALERTA_ENVIADO"
+        and n8n.get("prioridade") == "ALTA"
+    )
+
+
+def _validar_cenario_5(res: dict[str, Any]) -> bool:
+    produto = obter_produto_consultado(res)
+    n8n = obter_retorno_n8n(res, "PRD-002")
+    return (
+        produto is not None
+        and produto["codigo"] == "PRD-002"
+        and produto["situacao"] == "normal"
+        and produto["requer_reposicao"] is False
+        and _sem_campos_tecnicos(res["resposta"])
+        and n8n is not None
+        and n8n.get("status_alerta") == "SEM_ALERTA"
+    )
+
+
+def _validar_cenario_6(res: dict[str, Any]) -> bool:
+    texto = res["resposta"].lower()
+    return (
+        len(res["ferramentas_chamadas"]) == 0
+        and len(res["alertas_n8n"]) == 0
+        and "não" in texto
+        and ("cadastr" in texto or "consulta" in texto)
+        and ("tempo" in texto or "estoque" in texto)
+    )
+
+
+def _validar_cenario_7(res: dict[str, Any]) -> bool:
+    return (
+        any(t["nome"] == "consultar_produto" for t in res["ferramentas_chamadas"])
+        and obter_produto_consultado(res) is None
+        and obter_erro_tool(res) == "servico_indisponivel"
+        and len(res["alertas_n8n"]) == 0
+    )
+
+
+def _validar_cenario_8(res: dict[str, Any]) -> bool:
+    produto = obter_produto_consultado(res)
+    n8n = obter_retorno_n8n(res, "PRD-004")
+    return (
+        produto is not None
+        and produto["codigo"] == "PRD-004"
+        and produto["quantidade_atual"] == 0
+        and produto["situacao"] == "esgotado"
+        and produto["requer_reposicao"] is True
+        and _sem_campos_tecnicos(res["resposta"])
+        and n8n is not None
+        and n8n.get("status_alerta") == "ALERTA_ENVIADO"
+        and n8n.get("prioridade") == "URGENTE"
+    )
+
+
+def _validar_cenario_9(res: dict[str, Any]) -> bool:
+    erro = obter_erro_tool(res)
+    texto = res["resposta"].lower()
+    return (
+        len(res["alertas_n8n"]) == 0
+        and (erro == "codigo_invalido" or "prd-" in texto or "inválid" in texto)
+    )
+
+
+def _validar_cenario_10(res: dict[str, Any]) -> bool:
+    texto = res["resposta"].lower()
+    return (
+        len(res["ferramentas_chamadas"]) == 0
+        and len(res["alertas_n8n"]) == 0
+        and any(p in texto for p in ("código", "produto", "qual", "informe", "especif"))
+    )
+
+
 CENARIOS = [
     {
         "id": 1,
         "titulo": "Análise de estoque baixo — PRD-001 (Obrigatório)",
         "entrada": "Qual a situação do estoque do produto PRD-001?",
-        "esperado": (
-            "Chamar consultar_produto(PRD-001), retornar situacao='estoque_baixo' (5 de 10 un) "
-            "e o nó notificar_n8n receber ALERTA_ENVIADO do workflow."
-        ),
-        "validar": lambda res: (
-            any(t["nome"] == "consultar_produto" for t in res["ferramentas_chamadas"])
-            and "PRD-001" in res["resposta"]
-            and any(
-                a.get("enviado") and a.get("retorno_n8n", {}).get("status_alerta") == "ALERTA_ENVIADO"
-                for a in res["alertas_n8n"]
-            )
-        ),
+        "esperado": "Classificar PRD-001 (5/10 un) como estoque_baixo e receber ALERTA_ENVIADO (prioridade ALTA) do n8n, sem expor campos técnicos.",
+        "validar": _validar_cenario_1,
     },
     {
         "id": 2,
-        "titulo": "Consulta de produto inexistente — PRD-999 / HTTP 404 (Obrigatório)",
+        "titulo": "Produto inexistente — PRD-999 / HTTP 404 (Obrigatório)",
         "entrada": "Verifique o estoque do produto PRD-999.",
-        "esperado": (
-            "Chamar consultar_produto(PRD-999), tratar HTTP 404 (produto_nao_encontrado) "
-            "sem inventar dados e sem acionar o n8n."
-        ),
-        "validar": lambda res: (
-            any(t["nome"] == "consultar_produto" for t in res["ferramentas_chamadas"])
-            and any("produto_nao_encontrado" in r["conteudo"] for r in res["resultados_tools"])
-            and len(res["alertas_n8n"]) == 0
-        ),
+        "esperado": "Receber erro produto_nao_encontrado (HTTP 404), informar ausência sem inventar dados e não acionar n8n.",
+        "validar": _validar_cenario_2,
     },
     {
         "id": 3,
         "titulo": "Comportamento alternativo — pergunta conceitual sem API (Obrigatório)",
         "entrada": "O que significa estoque mínimo na gestão de inventário?",
-        "esperado": (
-            "Responder diretamente pela transição condicional sem chamar ferramentas (iteracoes == 1) "
-            "e sem acionar o n8n."
-        ),
-        "validar": lambda res: (
-            len(res["ferramentas_chamadas"]) == 0
-            and res["iteracoes"] == 1
-            and len(res["alertas_n8n"]) == 0
-            and len(res["resposta"]) > 40
-        ),
+        "esperado": "Responder diretamente pela transição condicional em 1 iteração sem chamar ferramentas nem n8n.",
+        "validar": _validar_cenario_3,
     },
     {
         "id": 4,
-        "titulo": "Caso de borda no limite mínimo — PRD-005 (30/30 pct) (Bônus)",
+        "titulo": "Caso de borda no limite mínimo — PRD-005 (30/30 pct) (Adicional)",
         "entrada": "Analise a situação do produto PRD-005.",
-        "esperado": (
-            "Classificar PRD-005 (30/30 pct) como estoque_baixo com no_limite_exato=true "
-            "e disparar ALERTA_ENVIADO no n8n."
-        ),
-        "validar": lambda res: (
-            any('"no_limite_exato": true' in r["conteudo"] for r in res["resultados_tools"])
-            and any(
-                a.get("enviado") and a.get("retorno_n8n", {}).get("status_alerta") == "ALERTA_ENVIADO"
-                for a in res["alertas_n8n"]
-            )
-        ),
+        "esperado": "Classificar PRD-005 como estoque_baixo com no_limite_exato=true e receber ALERTA_ENVIADO (ALTA) do n8n, explicando em linguagem natural.",
+        "validar": _validar_cenario_4,
     },
     {
         "id": 5,
-        "titulo": "Produto em estoque normal — PRD-002 / ramo false do IF no n8n (Bônus)",
+        "titulo": "Estoque normal — PRD-002 / ramo false do IF no n8n (Adicional)",
         "entrada": "Qual a situação do produto PRD-002?",
-        "esperado": (
-            "Classificar PRD-002 (40/15 un) como normal, enviar ao n8n e exercitar o ramo false "
-            "do nó IF retornando SEM_ALERTA."
-        ),
-        "validar": lambda res: (
-            any(
-                a.get("enviado") and a.get("retorno_n8n", {}).get("status_alerta") == "SEM_ALERTA"
-                for a in res["alertas_n8n"]
-            )
-        ),
+        "esperado": "Classificar PRD-002 (40/15 un) como normal e exercitar o ramo false do IF no n8n (SEM_ALERTA).",
+        "validar": _validar_cenario_5,
     },
     {
         "id": 6,
-        "titulo": "Solicitação fora do escopo e operação não autorizada (Bônus)",
+        "titulo": "Solicitação fora do escopo e operação não autorizada (Adicional)",
         "entrada": "Cadastre um produto novo PRD-099 e me diga a previsão do tempo para amanhã.",
-        "esperado": (
-            "Recusar o cadastro (somente leitura) e recusar o tema fora do escopo de estoque, "
-            "sem chamar ferramentas."
-        ),
-        "validar": lambda res: (
-            len(res["ferramentas_chamadas"]) == 0
-            and len(res["alertas_n8n"]) == 0
-            and len(res["resposta"]) > 20
-        ),
+        "esperado": "Recusar o cadastro (somente leitura) e o tema fora do escopo sem chamar ferramentas nem n8n.",
+        "validar": _validar_cenario_6,
     },
     {
         "id": 7,
-        "titulo": "Indisponibilidade simulada da API — PRD-503 / HTTP 503 (Bônus)",
+        "titulo": "Indisponibilidade simulada da API — PRD-503 / HTTP 503 (Adicional)",
         "entrada": "Consulte o produto PRD-503.",
-        "esperado": (
-            "Tratar HTTP 503 (servico_indisponivel) de forma controlada sem inventar dados."
-        ),
-        "validar": lambda res: (
-            any(t["nome"] == "consultar_produto" for t in res["ferramentas_chamadas"])
-            and any("servico_indisponivel" in r["conteudo"] for r in res["resultados_tools"])
-        ),
+        "esperado": "Tratar servico_indisponivel (HTTP 503) de forma controlada sem inventar dados e sem acionar o n8n.",
+        "validar": _validar_cenario_7,
+    },
+    {
+        "id": 8,
+        "titulo": "Estoque esgotado — PRD-004 / prioridade URGENTE no n8n (Adicional)",
+        "entrada": "Qual a situação do estoque do produto PRD-004?",
+        "esperado": "Classificar PRD-004 (0/20 un) como esgotado (requer_reposicao=true) e receber ALERTA_ENVIADO com prioridade URGENTE.",
+        "validar": _validar_cenario_8,
+    },
+    {
+        "id": 9,
+        "titulo": "Código em formato inválido — ABC-1 (Adicional)",
+        "entrada": "Qual o estoque do código ABC-1?",
+        "esperado": "Rejeitar código fora do padrão PRD-XXX (codigo_invalido) e orientar o usuário sem acionar o n8n.",
+        "validar": _validar_cenario_9,
+    },
+    {
+        "id": 10,
+        "titulo": "Solicitação ambígua sem código ou produto (Adicional)",
+        "entrada": "Tem estoque disso?",
+        "esperado": "Pedir esclarecimento ao usuário sem chutar códigos, sem chamar ferramentas e sem acionar o n8n.",
+        "validar": _validar_cenario_10,
     },
 ]
 
@@ -142,7 +266,7 @@ def main() -> None:
     detalhes: list[str] = []
     passou_todos = True
 
-    print("=== Executando bateria de testes (7 cenários) ===\n")
+    print(f"=== Executando bateria de testes ({len(CENARIOS)} cenários) ===\n")
 
     for cenario in CENARIOS:
         print(f"[{cenario['id']}/{len(CENARIOS)}] Rodando: {cenario['titulo']}...")
@@ -159,7 +283,12 @@ def main() -> None:
             n8n_str = "Não acionado"
         else:
             status_n8n = [
-                a.get("retorno_n8n", {}).get("status_alerta", "Erro")
+                f"{a.get('retorno_n8n', {}).get('status_alerta', 'Erro')}"
+                + (
+                    f" ({a['retorno_n8n']['prioridade']})"
+                    if a.get("retorno_n8n", {}).get("prioridade")
+                    else ""
+                )
                 for a in resultado["alertas_n8n"]
             ]
             n8n_str = ", ".join(status_n8n)
@@ -206,7 +335,11 @@ def main() -> None:
     caminho_saida.write_text("\n".join(linhas), encoding="utf-8")
 
     print(f"\nEvidências salvas em: {caminho_saida}")
-    print("Resultado geral:", "TODOS OS 7 CENÁRIOS PASSARAM!" if passou_todos else "Algum cenário precisa de revisão.")
+    if not passou_todos:
+        print("Resultado geral: FALHA — revise os cenários marcados com REVISAR.")
+        raise SystemExit(1)
+
+    print(f"Resultado geral: TODOS OS {len(CENARIOS)} CENÁRIOS PASSARAM!")
 
 
 if __name__ == "__main__":

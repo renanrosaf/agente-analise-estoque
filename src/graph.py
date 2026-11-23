@@ -19,20 +19,21 @@ Você é um agente analista de estoque técnico, objetivo e confiável.
 Interpretar solicitações relacionadas à disponibilidade e à situação do estoque de produtos, consultar a API de Estoque por meio das ferramentas disponíveis quando necessário e produzir respostas claras e verificáveis.
 
 # Contexto
-- As ferramentas já retornam cada produto com a classificação oficial calculada em Python no campo `situacao`:
-  - `esgotado`: quantidade_atual == 0
-  - `estoque_baixo`: 0 < quantidade_atual <= estoque_minimo (inclui o limite exato, sinalizado por `no_limite_exato: true`)
-  - `normal`: quantidade_atual > estoque_minimo
-- Use exatamente o campo `situacao` retornado pela ferramenta — nunca recalcule nem contradiga esse valor. Quando `no_limite_exato` for `true`, destaque explicitamente que o item atingiu exatamente o limite mínimo e requer atenção/reposição preventiva.
+- As ferramentas retornam os dados já validados e classificados em Python:
+  - Esgotado: quantidade atual igual a 0.
+  - Estoque baixo: quantidade atual maior que 0 e menor ou igual ao estoque mínimo (incluindo itens exatamente no limite mínimo, que exigem atenção preventiva).
+  - Normal: quantidade atual acima do estoque mínimo.
+- Respeite rigorosamente a classificação recebida da ferramenta — nunca recalcule nem contradiga esse resultado. Quando o item estiver exatamente no limite mínimo, destaque em linguagem natural que ele atingiu o limite mínimo e requer reposição preventiva.
 
 # Restrições
 1. Só chame ferramentas quando a solicitação exigir consultar produtos, quantidades ou categorias na API.
 2. Para perguntas conceituais sobre gestão de estoque (ex.: "o que é estoque mínimo?"), responda diretamente SEM chamar nenhuma ferramenta.
-3. Para solicitações ambíguas (ex.: falta código ou categoria para identificar o produto), peça esclarecimento ao usuário sem chutar códigos.
+3. Para solicitações ambíguas (ex.: falta código ou categoria para identificar o produto), peça esclarecimento ao usuário sem chutar códigos e sem chamar ferramentas.
 4. Para solicitações fora do escopo de análise de estoque (ex.: previsão do tempo, receitas, esportes), informe educadamente que você atua apenas na análise de estoque e não chame ferramentas.
 5. Nunca cadastre, altere ou exclua produtos. Se o usuário pedir para cadastrar, editar ou apagar itens, recuse de forma clara explicando que o agente opera apenas em modo de consulta e análise.
 6. Nunca invente códigos, nomes, quantidades ou preços. Em caso de erro da API (404, 422, 503 ou conexão), explique o erro retornado de forma transparente.
-7. Ao analisar um produto existente, informe sempre: código, nome, quantidade atual, estoque mínimo, unidade, situação classificada e necessidade de reposição.
+7. Nunca cite nomes de campos técnicos ou internos do JSON (como `no_limite_exato`, `requer_reposicao`, `estoque_baixo`, `quantidade_atual` ou `situacao`) na resposta ao usuário; descreva tudo em linguagem natural clara.
+8. Ao analisar um produto existente, informe sempre: código, nome, quantidade atual, estoque mínimo, unidade, situação classificada e se há necessidade de reposição.
 """
 
 
@@ -83,11 +84,14 @@ def criar_grafo():
         return {"alertas_n8n": alertas}
 
     def decidir_proximo_passo(state: AgentState) -> str:
-        if state.get("iteracoes", 0) >= MAX_ITERACOES:
-            return "notificar_n8n"
-
         ultima_msg = state["messages"][-1]
-        if isinstance(ultima_msg, AIMessage) and ultima_msg.tool_calls:
+        tem_tool_calls = isinstance(ultima_msg, AIMessage) and bool(ultima_msg.tool_calls)
+
+        # Ao atingir o limite com consultas pendentes, encerra direto em END sem disparar alertas parciais
+        if state.get("iteracoes", 0) >= MAX_ITERACOES and tem_tool_calls:
+            return END
+
+        if tem_tool_calls:
             return "ferramentas"
         return "notificar_n8n"
 
@@ -100,7 +104,7 @@ def criar_grafo():
     builder.add_conditional_edges(
         "agente",
         decidir_proximo_passo,
-        {"ferramentas": "ferramentas", "notificar_n8n": "notificar_n8n"},
+        {"ferramentas": "ferramentas", "notificar_n8n": "notificar_n8n", END: END},
     )
     builder.add_edge("ferramentas", "agente")
     builder.add_edge("notificar_n8n", END)
@@ -127,18 +131,30 @@ def executar_agente(pergunta: str) -> dict[str, Any]:
 
     ultima_msg = estado_final["messages"][-1]
     resposta_final = _extrair_texto(ultima_msg.content)
+    iteracoes = estado_final.get("iteracoes", 0)
+    limite_atingido = (
+        iteracoes >= MAX_ITERACOES
+        and isinstance(ultima_msg, AIMessage)
+        and bool(ultima_msg.tool_calls)
+    )
 
-    # Fallback explícito caso o agente atinja o limite máximo de iterações sem texto final
-    if not resposta_final:
+    if limite_atingido:
         resposta_final = (
-            "Atingi o limite máximo de passos sem conseguir concluir a análise. "
-            "Por favor, reformule sua solicitação com mais detalhes."
+            f"Atingi o limite máximo de execução ({MAX_ITERACOES} iterações) com consultas ainda "
+            "pendentes e encerrei o fluxo por segurança sem disparar alertas parciais. "
+            "Por favor, reformule sua solicitação de forma mais específica."
+        )
+    elif not resposta_final:
+        resposta_final = (
+            "Não foi possível gerar uma resposta textual para esta solicitação. "
+            "Por favor, tente reformular o pedido."
         )
 
     return {
         "pergunta": pergunta,
         "resposta": resposta_final,
-        "iteracoes": estado_final.get("iteracoes", 0),
+        "iteracoes": iteracoes,
+        "limite_atingido": limite_atingido,
         "ferramentas_chamadas": ferramentas_chamadas,
         "resultados_tools": resultados_tools,
         "alertas_n8n": estado_final.get("alertas_n8n", []),

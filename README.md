@@ -9,18 +9,18 @@ Projeto avaliativo desenvolvido individualmente por **Renan Rosa Ferreira** para
 
 Empresas precisam acompanhar continuamente a disponibilidade de produtos para evitar rupturas de estoque ou compras desnecessárias. A [API de Estoque](https://github.com/wangsouza/api-estoque) disponibilizada pelo professor fornece apenas os dados brutos de cada item (`quantidade_atual` e `estoque_minimo`), sem classificar a situação nem gerar alertas.
 
-Este projeto implementa um **agente de IA em Python com LangGraph** capaz de interpretar solicitações em linguagem natural, consultar a API de Estoque sob demanda por meio de ferramentas HTTP, classificar a situação dos produtos (**esgotado**, **estoque baixo**, **no limite mínimo** ou **normal**), responder perguntas conceituais sem consultas desnecessárias e acionar uma **automação complementar no n8n** sempre que detectar itens críticos.
+Este projeto implementa um **agente de IA em Python com LangGraph** capaz de interpretar solicitações em linguagem natural, consultar a API de Estoque sob demanda por meio de ferramentas HTTP validadas com Pydantic, classificar a situação dos produtos (**esgotado**, **estoque baixo** — incluindo o limite mínimo exato — ou **normal**), responder perguntas conceituais sem consultas desnecessárias e acionar uma **automação complementar no n8n** para decisão e registro de alertas.
 
 ## 2. Vídeo demonstrativo
 
-- **Link do vídeo (até 5 minutos):** *(adicionar o link público ou não listado após a gravação na etapa final)*
+- **Link do vídeo (até 5 minutos):** *(substituir pelo link público ou não listado após a gravação do vídeo)*
 
 ## 3. Tecnologias utilizadas
 
-- **Linguagem:** Python 3.11+
+- **Linguagem:** Python 3.11+ *(desenvolvido e testado em Python 3.14)*
 - **Orquestração do agente:** LangGraph (`StateGraph`, `ToolNode`, transição condicional e limite de iterações)
 - **LLM:** Groq API (`openai/gpt-oss-120b` via `langchain-groq`)
-- **Integração HTTP e validação:** `httpx`, `pydantic`, `python-dotenv`
+- **Integração HTTP e validação:** `httpx`, `pydantic` (`BaseModel` com `strict=True`), `python-dotenv`
 - **API de dados (apoio):** [API de Estoque (FastAPI)](https://github.com/wangsouza/api-estoque) executada localmente em `http://127.0.0.1:8000`
 - **Automação complementar:** n8n executado localmente via Docker (`http://localhost:5678`)
 
@@ -29,52 +29,53 @@ Este projeto implementa um **agente de IA em Python com LangGraph** capaz de int
 ```mermaid
 flowchart LR
     U["Usuário / CLI"] --> A["Nó agente (LangGraph + Groq)"]
-    A --> D{"Decisão condicional (tool_calls e iteracoes < 5?)"}
-    D -- Sim --> T["Nó ferramentas (src/tools.py)"]
-    T -- HTTP GET --> API[("API de Estoque (FastAPI :8000)")]
+    A --> D{"Decisão condicional"}
+    D -- "tool_calls e iteracoes < 5" --> T["Nó ferramentas (src/tools.py + Pydantic)"]
+    T -- "HTTP GET" --> API[("API de Estoque (FastAPI :8000)")]
     API --> T
     T --> A
-    D -- Não / Limite --> N["Nó notificar_n8n (Webhook :5678)"]
+    D -- "Resposta final" --> N["Nó notificar_n8n (Webhook :5678)"]
     N --> R["END · Resposta verificada"]
+    D -- "Limite atingido (5 iterações)" --> R
 ```
 
 ### Estrutura do LangGraph (`src/graph.py`)
 
 - **Estado compartilhado (`AgentState`):** armazena o histórico de mensagens (`messages` com `add_messages`), o contador explícito `iteracoes` e os retornos `alertas_n8n`.
-- **Nós funcionais (3 nós):** `agente` (invoca o LLM com `SystemMessage` estruturado em **Papel, Objetivo, Contexto e Restrições**), `ferramentas` (`ToolNode` com as 3 ferramentas HTTP) e `notificar_n8n` (envia os produtos consultados ao Webhook do n8n dentro do próprio grafo).
-- **Transição condicional (`decidir_proximo_passo`):** decide entre acionar `ferramentas` ou seguir para `notificar_n8n → END` (sem chamar API em perguntas conceituais ou fora do escopo).
-- **Condição de parada e fallback:** trava dupla com `MAX_ITERACOES = 5` e `recursion_limit = 14`, além de mensagem explícita de fallback caso o limite seja atingido sem resposta textual.
+- **Nós funcionais (3 nós):** `agente` (invoca o LLM com `SystemMessage` estruturado em **Papel, Objetivo, Contexto e Restrições**, instruído a responder em linguagem natural sem expor nomes técnicos do JSON), `ferramentas` (`ToolNode` com as 3 ferramentas HTTP) e `notificar_n8n` (envia os produtos consultados ao Webhook do n8n dentro do próprio grafo).
+- **Transição condicional (`decidir_proximo_passo`):** decide entre acionar `ferramentas`, seguir para `notificar_n8n → END` ou encerrar diretamente em `END` ao atingir `MAX_ITERACOES = 5` com chamadas pendentes (evitando alertas parciais no n8n).
+- **Condição de parada e fallback:** trava dupla com `MAX_ITERACOES = 5` e `recursion_limit = 14`, devolvendo uma mensagem explícita de limite e a flag `limite_atingido: true` quando o fluxo é interrompido por segurança.
 
 ### Ferramentas Python integradas à API (`src/tools.py`)
 
-- `consultar_produto(codigo)`: valida previamente o padrão `^PRD-[0-9]{3}$`, realiza `GET /produtos/{codigo}` com `timeout=5s` e trata de forma controlada `404` (`produto_nao_encontrado`), `422` (`codigo_invalido`), `503` (`servico_indisponivel`, incluindo `PRD-503`), timeouts e falhas de conexão.
-- `listar_produtos(categoria=None)`: consulta `GET /produtos` com filtro opcional por categoria.
+- `consultar_produto(codigo)`: valida previamente o padrão `^PRD-[0-9]{3}$`, realiza `GET /produtos/{codigo}` com `timeout=5s`, valida o contrato da resposta via **Pydantic (`ProdutoAPI`, `strict=True`)** e trata de forma controlada `404` (`produto_nao_encontrado`), `422` (`codigo_invalido`), `503` (`servico_indisponivel`, incluindo `PRD-503`), `ValidationError` e `httpx.HTTPError`.
+- `listar_produtos(categoria=None)`: consulta `GET /produtos` com filtro opcional por categoria, valida cada item com `ProdutoAPI` e devolve também um bloco `resumo` com as contagens consolidadas por situação (evitando erros de contagem pelo LLM).
 - `listar_categorias()`: consulta `GET /categorias` para obter as categorias válidas cadastradas.
-
 
 ### Regras de classificação adotadas pelo agente
 
-A classificação é calculada em Python como **fonte única de verdade** em `src/tools.py` (evitando divergência entre o texto do LLM e o payload do n8n). Seguindo o critério do README da API do professor, itens exatamente no limite mínimo (`PRD-005` e `PRD-009`) são tratados como **estoque baixo** com sinalização `no_limite_exato: true`, garantindo alerta preventivo de reposição.
+A classificação é calculada em Python como **fonte única de verdade** em `src/tools.py` após validação estrita com Pydantic (evitando divergência entre o texto do LLM e o payload do n8n). Seguindo o critério do README da API do professor, itens exatamente no limite mínimo (`PRD-005` e `PRD-009`) são tratados como **estoque baixo** com sinalização interna `no_limite_exato: true`, garantindo alerta preventivo de reposição.
 
 | Condição | Classificação (`situacao`) | Comportamento no n8n |
 |---|---|---|
 | `quantidade_atual == 0` | **Esgotado** (`esgotado`) | `ALERTA_ENVIADO` (`URGENTE`) |
-| `0 < quantidade_atual <= estoque_minimo` | **Estoque baixo** (`estoque_baixo`, inclui limite exato com `no_limite_exato: true`) | `ALERTA_ENVIADO` (`ALTA`) |
+| `0 < quantidade_atual <= estoque_minimo` | **Estoque baixo** (`estoque_baixo`, inclui limite exato) | `ALERTA_ENVIADO` (`ALTA`) |
 | `quantidade_atual > estoque_minimo` | **Normal** (`normal`) | `SEM_ALERTA` (ramo `false` do `IF`) |
 
 ## 5. Automação complementar com n8n
 
-O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow_alerta.json](n8n/workflow_alerta.json) atua **após** a análise do LangGraph, sem substituir a lógica principal do agente:
+O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow_alerta.json](n8n/workflow_alerta.json)) atua no nó final do grafo, sem substituir a lógica principal do LangGraph:
 
 1. **Webhook (`POST /webhook/alerta-estoque`):** recebe do cliente Python (`src/n8n_client.py`) os dados do produto analisado e sua situação.
 2. **IF:** valida se `situacao` é `esgotado` **OU** `estoque_baixo`.
 3. **Edit Fields (Set):** gera prioridade (`URGENTE` para esgotado, `ALTA` para estoque baixo), mensagem formatada de reposição e carimbo de data/hora (`registrado_em`).
 4. **Respond to Webhook:** retorna o JSON estruturado de confirmação de volta para a aplicação Python (ou `SEM_ALERTA` no ramo `false`).
 
-### Evidência de execução do workflow no n8n
+### Evidências de execução do workflow no n8n
 
-[n8n/evidencia_execucao_n8n.png]
-[n8n/evidencia_payload_n8n.png]
+![Execução do workflow no n8n](n8n/evidencia_execucao_n8n.png)
+
+![Payload e saída do nó Edit Fields](n8n/evidencia_payload_n8n.png)
 
 ## 6. Organização dos arquivos
 
@@ -82,21 +83,21 @@ O workflow **`Alerta de Estoque Crítico`** (exportado em [n8n/workflow_alerta.j
 agente-analise-estoque/
 ├── n8n/
 │   ├── workflow_alerta.json        # Workflow exportado do n8n
-│   └── evidencia_execucao_n8n.png  # Print da execução com sucesso no n8n
-│   └── evidencia_payload_n8n.png  # Print da execução com sucesso no n8n
+│   ├── evidencia_execucao_n8n.png  # Print da execução do workflow no n8n
+│   └── evidencia_payload_n8n.png   # Print do payload e saída JSON do nó Edit Fields
 ├── src/
 │   ├── __init__.py
 │   ├── config.py                   # Carregamento e validação de variáveis (.env)
-│   ├── tools.py                    # Ferramentas HTTP integradas à API de Estoque
+│   ├── tools.py                    # Ferramentas HTTP com validação Pydantic e classificação
 │   ├── graph.py                    # Estado, nós, transição condicional e grafo LangGraph
 │   ├── n8n_client.py               # Cliente HTTP para disparo de alertas no Webhook n8n
 │   └── main.py                     # Interface CLI interativa
 ├── tests/
-│   ├── run_tests.py                # Script reproduzível dos 5 cenários de teste
+│   ├── run_tests.py                # Script reproduzível dos 10 cenários de teste
 │   └── evidencias.md               # Relatório gerado com entradas, saídas e logs JSON
 ├── .env.example                    # Modelo de variáveis de ambiente (sem chaves reais)
 ├── .gitignore
-├── requirements.txt
+├── requirements.txt                # Dependências diretas (UTF-8)
 └── README.md
 ```
 
@@ -104,7 +105,7 @@ agente-analise-estoque/
 
 ### Pré-requisitos
 
-- Python 3.11+
+- Python 3.11+ *(desenvolvido e testado em Python 3.14)*
 - [API de Estoque](https://github.com/wangsouza/api-estoque) clonada e em execução local em `http://127.0.0.1:8000`
 - Docker Desktop (para executar o n8n localmente em `http://localhost:5678`)
 - Chave de API gratuita da [Groq](https://console.groq.com/)
@@ -156,27 +157,33 @@ python -m src.main
 
 ## 8. Testes e evidências
 
-Para reproduzir os **3 cenários obrigatórios** e os **2 cenários bônus de confiabilidade/segurança**, execute:
+Para reproduzir os **10 cenários de teste** (**3 obrigatórios** e **7 adicionais** cobrindo estoque esgotado, limite mínimo, ramo `false` do n8n, código inválido, solicitação ambígua, fora do escopo e erro `503`), execute:
 
 ```powershell
 python -m tests.run_tests
 ```
 
+O script retorna código de saída diferente de zero (`SystemExit(1)`) caso qualquer validação falhe.
+
 | # | Cenário | Iterações | Ferramentas | Retorno n8n | Resultado |
 |---|---|---:|---|---|---|
-| 1 | Análise de estoque baixo (`PRD-001`) *(Obrigatório)* | 2 | `consultar_produto` | `ALERTA_ENVIADO` | **PASSOU** |
+| 1 | Análise de estoque baixo (`PRD-001`) *(Obrigatório)* | 2 | `consultar_produto` | `ALERTA_ENVIADO (ALTA)` | **PASSOU** |
 | 2 | Produto inexistente `PRD-999` — HTTP 404 *(Obrigatório)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
 | 3 | Pergunta conceitual sem chamar API *(Obrigatório)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
-| 4 | Caso de borda no limite mínimo (`PRD-005` — 30/30) *(Bônus)* | 2 | `consultar_produto` | `ALERTA_ENVIADO` | **PASSOU** |
-| 5 | Produto em estoque normal (`PRD-002` — ramo `false` do `IF`) *(Bônus)* | 2 | `consultar_produto` | `SEM_ALERTA` | **PASSOU** |
-| 6 | Fora do escopo e tentativa de cadastro não autorizado *(Bônus)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
-| 7 | Indisponibilidade simulada `PRD-503` — HTTP 503 *(Bônus)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
+| 4 | Caso de borda no limite mínimo (`PRD-005` — 30/30) *(Adicional)* | 2 | `consultar_produto` | `ALERTA_ENVIADO (ALTA)` | **PASSOU** |
+| 5 | Produto em estoque normal (`PRD-002` — ramo `false` do `IF`) *(Adicional)* | 2 | `consultar_produto` | `SEM_ALERTA` | **PASSOU** |
+| 6 | Fora do escopo e tentativa de cadastro não autorizado *(Adicional)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
+| 7 | Indisponibilidade simulada `PRD-503` — HTTP 503 *(Adicional)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
+| 8 | Estoque esgotado (`PRD-004` — 0/20) *(Adicional)* | 2 | `consultar_produto` | `ALERTA_ENVIADO (URGENTE)` | **PASSOU** |
+| 9 | Código em formato inválido (`ABC-1`) *(Adicional)* | 1–2 | `consultar_produto` / `nenhuma` | Não acionado | **PASSOU** |
+| 10 | Solicitação ambígua (`"Tem estoque disso?"`) *(Adicional)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
 
-Os logs completos (entrada, resultado esperado, resposta observada e JSON de ferramentas/n8n) estão registrados em [tests/evidencias.md](tests/evidencias.md)).
+Os logs completos (entrada, resultado esperado, resposta observada e JSON de ferramentas/n8n) estão registrados em [tests/evidencias.md](tests/evidencias.md).
 
 ## 9. Confiabilidade, segurança e limitações
 
-- **Proteção de credenciais:** a chave da API do LLM é carregada exclusivamente via `.env`, listado no `.gitignore` (nunca versionado).
+- **Proteção de credenciais:** a chave da API do LLM é carregada exclusivamente via `.env`, listado no `.gitignore` (nunca versionado), com rejeição automática de placeholders em `src/config.py`.
+- **Validação estrita de dados:** todos os retornos da API de Estoque são validados com Pydantic (`ProdutoAPI`, `strict=True`), rejeitando valores negativos, decimais ou campos ausentes.
 - **Operação segura (somente leitura):** o agente utiliza apenas endpoints `GET` da API de Estoque, evitando modificações não autorizadas na base de dados; caso o endpoint `POST /produtos` seja adicionado no futuro, exigirá confirmação humana explícita.
 - **Limitações conhecidas:**
   - Depende da API de Estoque (`127.0.0.1:8000`) e do n8n (`localhost:5678`) ativos localmente durante o uso.
@@ -187,3 +194,5 @@ Os logs completos (entrada, resultado esperado, resposta observada e JSON de fer
 
 **Renan Rosa Ferreira**
 
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/renanrosaferreira/)
+[![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/renanrosaf)
