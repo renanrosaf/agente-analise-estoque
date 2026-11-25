@@ -49,7 +49,7 @@ flowchart LR
 ### Ferramentas Python integradas à API (`src/tools.py`)
 
 - `consultar_produto(codigo)`: valida previamente o padrão `^PRD-[0-9]{3}$`, realiza `GET /produtos/{codigo}` com `timeout=5s`, valida o contrato da resposta via **Pydantic (`ProdutoAPI`, `strict=True`)** e trata de forma controlada `404` (`produto_nao_encontrado`), `422` (`codigo_invalido`), `503` (`servico_indisponivel`, incluindo `PRD-503`), `ValidationError` e `httpx.HTTPError`.
-- `listar_produtos(categoria=None)`: consulta `GET /produtos` com filtro opcional por categoria, valida cada item com `ProdutoAPI` e devolve também um bloco `resumo` com as contagens consolidadas por situação (evitando erros de contagem pelo LLM).
+- `listar_produtos(categoria=None)`: consulta `GET /produtos` com filtro opcional por categoria, valida cada item individualmente com `ProdutoAPI` (isolando eventuais registros inválidos em `registros_invalidos` sem derrubar a listagem inteira) e devolve um bloco `resumo` com as contagens consolidadas por situação (onde `estoque_baixo_no_limite` é um subconjunto de `estoque_baixo`).
 - `listar_categorias()`: consulta `GET /categorias` para obter as categorias válidas cadastradas.
 
 ### Regras de classificação adotadas pelo agente
@@ -93,7 +93,7 @@ agente-analise-estoque/
 │   ├── n8n_client.py               # Cliente HTTP para disparo de alertas no Webhook n8n
 │   └── main.py                     # Interface CLI interativa
 ├── tests/
-│   ├── run_tests.py                # Script reproduzível dos 10 cenários de teste
+│   ├── run_tests.py                # Script reproduzível dos 11 cenários de teste
 │   └── evidencias.md               # Relatório gerado com entradas, saídas e logs JSON
 ├── .env.example                    # Modelo de variáveis de ambiente (sem chaves reais)
 ├── .gitignore
@@ -157,7 +157,7 @@ python -m src.main
 
 ## 8. Testes e evidências
 
-Para reproduzir os **10 cenários de teste** (**3 obrigatórios** e **7 adicionais** cobrindo estoque esgotado, limite mínimo, ramo `false` do n8n, código inválido, solicitação ambígua, fora do escopo e erro `503`), execute:
+Para reproduzir os **11 cenários de teste** (**3 obrigatórios** e **8 adicionais** cobrindo estoque esgotado, limite mínimo, listagem com resumo consolidado, ramo `false` do n8n, código inválido, solicitação ambígua, fora do escopo e erro `503`), execute:
 
 ```powershell
 python -m tests.run_tests
@@ -175,8 +175,9 @@ O script retorna código de saída diferente de zero (`SystemExit(1)`) caso qual
 | 6 | Fora do escopo e tentativa de cadastro não autorizado *(Adicional)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
 | 7 | Indisponibilidade simulada `PRD-503` — HTTP 503 *(Adicional)* | 2 | `consultar_produto` | Não acionado | **PASSOU** |
 | 8 | Estoque esgotado (`PRD-004` — 0/20) *(Adicional)* | 2 | `consultar_produto` | `ALERTA_ENVIADO (URGENTE)` | **PASSOU** |
-| 9 | Código em formato inválido (`ABC-1`) *(Adicional)* | 1–2 | `consultar_produto` / `nenhuma` | Não acionado | **PASSOU** |
+| 9 | Código em formato inválido (`ABC-1`) *(Adicional)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
 | 10 | Solicitação ambígua (`"Tem estoque disso?"`) *(Adicional)* | 1 | `nenhuma` | Não acionado | **PASSOU** |
+| 11 | Listagem geral e resumo consolidado (`listar_produtos`) *(Adicional)* | 2 | `listar_produtos` | `7 ALERTA_ENVIADO, 5 SEM_ALERTA` | **PASSOU** |
 
 Os logs completos (entrada, resultado esperado, resposta observada e JSON de ferramentas/n8n) estão registrados em [tests/evidencias.md](tests/evidencias.md).
 

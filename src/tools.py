@@ -150,12 +150,18 @@ def consultar_produto(codigo: str) -> dict[str, Any]:
 def listar_produtos(categoria: str | None = None) -> dict[str, Any]:
     """Lista os produtos do estoque com resumo consolidado por situação.
 
+    Valida cada item individualmente com Pydantic (`ProdutoAPI`): registros válidos são
+    classificados normalmente e eventuais itens inválidos são isolados em `registros_invalidos`
+    sem derrubar a listagem inteira. No campo `resumo`, `esgotado + estoque_baixo + normal`
+    corresponde ao total de itens válidos, enquanto `estoque_baixo_no_limite` representa o
+    subconjunto de `estoque_baixo` que atingiu exatamente o mínimo (`requerem_reposicao = esgotado + estoque_baixo`).
+
     Args:
         categoria: Nome opcional da categoria para filtrar (ex.: 'Periféricos', 'Papelaria').
 
     Returns:
-        Dicionário com `sucesso=True`, `total`, `resumo` (contagens por situação) e `produtos`
-        validados/classificados, ou `sucesso=False` com `erro` e `mensagem`.
+        Dicionário com `sucesso=True`, `total`, `resumo`, `produtos` validados e
+        `registros_invalidos`, ou `sucesso=False` com `erro` e `mensagem`.
     """
     params = {"categoria": categoria.strip()} if categoria and categoria.strip() else None
 
@@ -180,28 +186,35 @@ def listar_produtos(categoria: str | None = None) -> dict[str, Any]:
         }
 
     dados = _ler_json_seguro(resposta)
-    try:
-        produtos_classificados = [classificar_produto(p) for p in dados.get("produtos", [])]
-    except ValidationError as exc:
-        return {
-            "sucesso": False,
-            "erro": "dados_api_invalidos",
-            "mensagem": f"Lista de produtos da API fora do contrato esperado: {exc.error_count()} erro(s).",
-        }
+    produtos_classificados: list[dict[str, Any]] = []
+    registros_invalidos: list[dict[str, Any]] = []
+
+    for idx, item in enumerate(dados.get("produtos", [])):
+        try:
+            produtos_classificados.append(classificar_produto(item))
+        except ValidationError as exc:
+            registros_invalidos.append(
+                {
+                    "indice": idx,
+                    "codigo": item.get("codigo") if isinstance(item, dict) else None,
+                    "erros": exc.error_count(),
+                }
+            )
 
     resumo = {
         "esgotado": sum(1 for p in produtos_classificados if p["situacao"] == "esgotado"),
         "estoque_baixo": sum(1 for p in produtos_classificados if p["situacao"] == "estoque_baixo"),
-        "no_limite_exato": sum(1 for p in produtos_classificados if p["no_limite_exato"]),
+        "estoque_baixo_no_limite": sum(1 for p in produtos_classificados if p["no_limite_exato"]),
         "normal": sum(1 for p in produtos_classificados if p["situacao"] == "normal"),
         "requerem_reposicao": sum(1 for p in produtos_classificados if p["requer_reposicao"]),
     }
 
     return {
         "sucesso": True,
-        "total": dados.get("total", len(produtos_classificados)),
+        "total": len(produtos_classificados),
         "resumo": resumo,
         "produtos": produtos_classificados,
+        "registros_invalidos": registros_invalidos,
     }
 
 

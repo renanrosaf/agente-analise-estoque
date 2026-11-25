@@ -162,6 +162,34 @@ def _validar_cenario_10(res: dict[str, Any]) -> bool:
     )
 
 
+def obter_listagem_produtos(resultado: dict[str, Any]) -> dict[str, Any] | None:
+    """Extrai o payload retornado com sucesso pela tool listar_produtos."""
+    for item in resultado["resultados_tools"]:
+        if item.get("tool") != "listar_produtos":
+            continue
+        try:
+            dados = json.loads(item["conteudo"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(dados, dict) and dados.get("sucesso") and "resumo" in dados:
+            return dados
+    return None
+
+
+def _validar_cenario_11(res: dict[str, Any]) -> bool:
+    listagem = obter_listagem_produtos(res)
+    return (
+        any(t["nome"] == "listar_produtos" for t in res["ferramentas_chamadas"])
+        and listagem is not None
+        and listagem["total"] == 12
+        and listagem["resumo"]["requerem_reposicao"] == 7
+        and listagem["resumo"]["estoque_baixo_no_limite"] == 2
+        and "7" in res["resposta"]
+        and _sem_campos_tecnicos(res["resposta"])
+        and len(res["alertas_n8n"]) == 12
+    )
+
+
 CENARIOS = [
     {
         "id": 1,
@@ -232,6 +260,13 @@ CENARIOS = [
         "entrada": "Tem estoque disso?",
         "esperado": "Pedir esclarecimento ao usuário sem chutar códigos, sem chamar ferramentas e sem acionar o n8n.",
         "validar": _validar_cenario_10,
+    },
+    {
+        "id": 11,
+        "titulo": "Listagem geral e resumo consolidado — listar_produtos (Adicional)",
+        "entrada": "Quantos produtos precisam de reposição no estoque?",
+        "esperado": "Chamar listar_produtos, retornar resumo consolidado (12 itens, 7 requerem reposição sendo 2 no limite) e responder 7 sem citar campos técnicos.",
+        "validar": _validar_cenario_11,
     },
 ]
 

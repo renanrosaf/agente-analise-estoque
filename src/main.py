@@ -20,7 +20,11 @@ def main() -> None:
             continue
 
         tools = [t["nome"] for t in resultado["ferramentas_chamadas"]]
-        print(f"\n[Log] Iterações: {resultado['iteracoes']} | Ferramentas usadas: {tools or 'nenhuma'}")
+        print(
+            f"\n[Log] Iterações: {resultado['iteracoes']} "
+            f"| Ferramentas usadas: {tools or 'nenhuma'} "
+            f"| Limite atingido: {resultado.get('limite_atingido', False)}"
+        )
         print(f"Agente:\n{resultado['resposta']}\n")
 
         for item in resultado["alertas_n8n"]:
