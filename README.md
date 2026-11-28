@@ -13,7 +13,7 @@ Este projeto implementa um **agente de IA em Python com LangGraph** capaz de int
 
 ## 2. Vídeo demonstrativo
 
-- **Link do vídeo (até 5 minutos):** *(substituir pelo link público ou não listado após a gravação do vídeo)*
+(https://drive.google.com/file/d/1LqvDbabHnnCoMJ6zgXcW8Jw5dq5EAg6r/view?usp=sharing)
 
 ## 3. Tecnologias utilizadas
 
